@@ -65,8 +65,14 @@ params = ['Ωbh2', 'Ωch2', 'h', 'τ', 'ns', 'lnA']
 θmin, θmax = np.array([[0.01865, 0.02625], [0.05, 0.255], [0.64, 0.82], [0.04, 0.12], [0.84, 1.1], [1.61, 3.91]]).T
 l = np.arange(2, 2509)
 
+#| Define the noise-scale, based on Planck Beam Width and Noise Temp.
+theta = np.array([9.66, 7.22, 4.90]) * 2 * np.pi / 60 / 360  # Effective beam FWHM in rad
+sigma_T = np.array([1.29, 0.55, 0.78]) * 2 * np.pi / 360 / 1e6  # temperature noise level in CMBmicroK rad
+Nl_planck = (sigma_T**2 * np.exp(l[..., None] * (l[:, None] + 1) * theta**2 / 8 / np.log(2))) / np.pi
+Nl = (Nl_planck**-1).sum(axis=1)**-1
 
 #| Define the observed variables
+
 θobs = np.array([0.02225,0.120,0.693,0.054,0.965,3.05])
 Dobs = CMB(emulator.predict(θobs)).rvs()
 
