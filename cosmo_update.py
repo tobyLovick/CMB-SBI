@@ -84,7 +84,7 @@ np.random.seed()
 #| Otherwise just load these chains
 
 from anesthetic import read_chains
-jaxsamples = read_chains('lcdm.csv')
+jaxsamples = read_chains('jaxLCDM.csv')
 
 #| Wrap cosmopowerjax predictions with this to check that only physical simulations are generated
 def Generate_Cl(Nsim,model,i):
