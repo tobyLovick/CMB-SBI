@@ -71,13 +71,13 @@ sigma_T = np.array([1.29, 0.55, 0.78]) * 2 * np.pi / 360 / 1e6  # temperature no
 Nl_planck = (sigma_T**2 * np.exp(l[..., None] * (l[:, None] + 1) * theta**2 / 8 / np.log(2))) / np.pi
 Nl = (Nl_planck**-1).sum(axis=1)**-1
 
-#| Define the observed variables
-
+#| Define the observed variables, set seed for observed, random seed for the analysis
+np.random.seed(0)
 θobs = np.array([0.02225,0.120,0.693,0.054,0.965,3.05])
-Dobs = CMB(emulator.predict(θobs)).rvs()
-
+Dobs = CMB(emulator.predict(θobs)+Nl).rvs()
 np.savetxt("theta.csv", θobs)
 np.savetxt("data.csv", Dobs)
+np.random.seed()
 
 #| If you want to reproduce the ground-truth yourself, uncomment and run the below (takes about an hour on four cores)
 
@@ -88,7 +88,7 @@ np.savetxt("data.csv", Dobs)
 #| Otherwise just load these chains
 
 from anesthetic import read_chains
-jaxsamples = read_chains('lcdm.csv')
+jaxsamples = read_chains('jaxLCDM.csv')
 
 #| Wrap cosmopowerjax predictions with this to check that only physical simulations are generated
 def Generate_Cl(Nsim,model,i):
@@ -126,7 +126,7 @@ def run_LSBI(θ, D, Dobs, n_runs=4):
                 try:
                     currmodel = models[-1].posterior(Dobs)
                     θ_, Cl_ = Generate_Cl(Nsim,currmodel,i)
-                    D_ = CMB(Cl_).rvs()
+                    D_ = CMB(Cl_+Nl).rvs()
                     generated = True
                 except Exception as e:
                     models.pop()
@@ -139,7 +139,7 @@ import tqdm
 ## Create initial simulations
 θ = np.random.normal(loc=(θmin + θmax) / 2, scale=(θmax - θmin) / 6, size=(Nsim, 6))
 Cl = emulator.predict(θ)
-D = CMB(Cl).rvs()
+D = CMB(Cl+Nl).rvs()
 models=(run_LSBI(θ,D,Dobs,n_runs))
 
 #| Plot the results
