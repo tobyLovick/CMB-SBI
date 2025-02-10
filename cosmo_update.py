@@ -65,13 +65,15 @@ params = ['Ωbh2', 'Ωch2', 'h', 'τ', 'ns', 'lnA']
 θmin, θmax = np.array([[0.01865, 0.02625], [0.05, 0.255], [0.64, 0.82], [0.04, 0.12], [0.84, 1.1], [1.61, 3.91]]).T
 l = np.arange(2, 2509)
 
-
-#| Define the observed variables
+#| Define the observed variables, set seed for observed, random seed for the analysis
+np.random.seed(0)
 θobs = np.array([0.02225,0.120,0.693,0.054,0.965,3.05])
 Dobs = CMB(emulator.predict(θobs)).rvs()
-
 np.savetxt("theta.csv", θobs)
 np.savetxt("data.csv", Dobs)
+np.random.seed()
+
+
 
 #| If you want to reproduce the ground-truth yourself, uncomment and run the below (takes about an hour on four cores)
 
