@@ -48,21 +48,26 @@ def LSBI(θ, D, *args, **kwargs):
 from scipy.stats import chi2
 
 class CMB(object):
-    def __init__(self, Cl):
+    def __init__(self,Cl,alpha,delta):
         self.Cl = Cl
-
-    def rvs(self, shape=()):
+        self.alpha = np.exp(alpha)
+        self.delta = delta * (delta > 0)
+    def rvs(self, shape=()): ## Introduce Non-Gaussian likelihood
         shape = tuple(np.atleast_1d(shape))
-        return chi2(2*l+1).rvs(shape + self.Cl.shape)*self.Cl/(2*l+1)
+        cosmicvariance = chi2(2*l+1).rvs(shape + self.Cl.shape)/(2*l+1)
+        ## add cosmic variance and delta in quadrature (delta is vector, cosmicvariance is matrix)
 
-    def logpdf(self, x):
-        return (chi2(2*l+1).logpdf((2*l+1)*x/self.Cl)  + np.log(2*l+1)-np.log(self.Cl)).sum(axis=-1) 
+        return (np.sqrt(cosmicvariance.T**2+self.delta**2)*self.alpha*self.Cl.T).T
+    
+    #| Log-pdf is not used as is incorrect for non-Gaussian likelihood
+    # def logpdf(self, x): 
+    #     return (chi2(2*l+1).logpdf((2*l+1)*x/self.Cl)  + np.log(2*l+1)-np.log(self.Cl)).sum(axis=-1) 
 
 from cosmopower_jax.cosmopower_jax import CosmoPowerJAX 
 emulator = CosmoPowerJAX(probe='cmb_tt')
-paramnames = [('Ωbh2', r'\Omega_b h^2'), ('Ωch2', r'\Omega_c h^2'), ('h', 'h'), ('τ', r'\tau'), ('ns', r'n_s'), ('lnA', r'\ln(10^{10}A_s)')]
-params = ['Ωbh2', 'Ωch2', 'h', 'τ', 'ns', 'lnA']
-θmin, θmax = np.array([[0.01865, 0.02625], [0.05, 0.255], [0.64, 0.82], [0.04, 0.12], [0.84, 1.1], [1.61, 3.91]]).T
+paramnames = [('Ωbh2', r'\Omega_b h^2'), ('Ωch2', r'\Omega_c h^2'), ('h', 'h'), ('τ', r'\tau'), ('ns', r'n_s'), ('lnA', r'\ln(10^{10}A_s)'), ('alpha', r'\alpha'), ('delta', r'\delta')]
+params = ['Ωbh2', 'Ωch2', 'h', 'τ', 'ns', 'lnA', 'alpha', 'delta']
+θmin, θmax = np.array([[0.01865, 0.02625], [0.05, 0.255], [0.64, 0.82], [0.04, 0.12], [0.84, 1.1], [1.61, 3.91], [-3,3], [0,1]]).T
 l = np.arange(2, 2509)
 
 #| Define the noise-scale, based on Planck Beam Width and Noise Temp.
@@ -70,11 +75,12 @@ theta = np.array([9.66, 7.22, 4.90]) * 2 * np.pi / 60 / 360  # Effective beam FW
 sigma_T = np.array([1.29, 0.55, 0.78]) * 2 * np.pi / 360 / 1e6  # temperature noise level in CMBmicroK rad
 Nl_planck = (sigma_T**2 * np.exp(l[..., None] * (l[:, None] + 1) * theta**2 / 8 / np.log(2))) / np.pi
 Nl = (Nl_planck**-1).sum(axis=1)**-1
+Nl *=0
 
 #| Define the observed variables, set seed for observed, random seed for the analysis
 np.random.seed(0)
-θobs = np.array([0.02225,0.120,0.693,0.054,0.965,3.05])
-Dobs = CMB(emulator.predict(θobs)+Nl).rvs()
+θobs = np.array([0.02225,0.120,0.693,0.054,0.965,3.05,0,0])
+Dobs = CMB(emulator.predict(θobs[:6])+Nl,θobs[6],θobs[7]).rvs()
 np.savetxt("theta.csv", θobs)
 np.savetxt("data.csv", Dobs)
 np.random.seed()
@@ -94,7 +100,7 @@ jaxsamples = read_chains(os.path.join(os.path.dirname(__file__), 'jaxLCDM.csv'))
 #| Wrap cosmopowerjax predictions with this to check that only physical simulations are generated
 def Generate_Cl(Nsim,model,i):
     θ_ = model.rvs(Nsim)
-    predictions = emulator.predict(θ_)
+    predictions = emulator.predict(θ_[:,:6])
     θ_ = θ_[~np.isinf(predictions).any(axis=1)]
     predictions = predictions[~np.isinf(predictions).any(axis=1)]
     breakcondition = 0
@@ -103,7 +109,7 @@ def Generate_Cl(Nsim,model,i):
         raise ValueError("Bad Posterior")
     while len(predictions) < Nsim and breakcondition < 10:
         θ_ = np.concatenate([θ_,model.rvs(Nsim-len(predictions))])
-        predictions = emulator.predict(θ_)
+        predictions = emulator.predict(θ_[:,:6])
         θ_ = θ_[~np.isinf(predictions).any(axis=1)]
         predictions = predictions[~np.isinf(predictions).any(axis=1)]
         breakcondition += 1
@@ -122,12 +128,18 @@ def run_LSBI(θ, D, Dobs, n_runs=4):
             if i == 0:
                 models = [LSBI(θ, D, μ= (θmin + θmax)/2, Σ= (θmax - θmin)**2)]
             else:
-                models.append(LSBI(θ_, D_, μ=models[-1].μ, Σ=models[-1].Σ))
+                LSBIflag = False
+                while not LSBIflag:
+                    try:
+                        models.append(LSBI(θ_, D_, μ=models[-1].μ, Σ=models[-1].Σ))
+                        LSBIflag = True
+                    except Exception as e:
+                        print(f"Error occurred: {e} while generating model")
             if i < n_runs-1:
                 try:
                     currmodel = models[-1].posterior(Dobs)
                     θ_, Cl_ = Generate_Cl(Nsim,currmodel,i)
-                    D_ = CMB(Cl_+Nl).rvs()
+                    D_ = CMB(Cl_+Nl,θ_[:,6],θ_[:,7]).rvs()
                     generated = True
                 except Exception as e:
                     models.pop()
@@ -138,10 +150,10 @@ def run_LSBI(θ, D, Dobs, n_runs=4):
 
 import tqdm
 ## Create initial simulations
-θ = np.random.normal(loc=(θmin + θmax) / 2, scale=(θmax - θmin) / 6, size=(Nsim, 6))
-Cl = emulator.predict(θ)
-D = CMB(Cl+Nl).rvs()
-models=(run_LSBI(θ,D,Dobs,n_runs))
+θ = np.random.normal(loc=(θmin + θmax) / 2, scale=(θmax - θmin) / 6, size=(Nsim, 8))
+Cl = emulator.predict(θ[:,:6])
+D = CMB(Cl+Nl,θ[:,6],θ[:,7]).rvs()
+models=run_LSBI(θ,D,Dobs,n_runs)
 
 #| Plot the results
 
@@ -170,7 +182,7 @@ for n in range(n_runs+1):
     label = f'run {n}' if n > 0 else 'Prior'
     color = f'C{n-1}' if n > 0 else 'black'
     
-    for i in range(6):
+    for i in range(8):
         for j in range(i+1):
             ax = axes.loc[params[i], params[j]]
             if i==j:
