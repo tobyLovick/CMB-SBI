@@ -116,7 +116,7 @@ def run_LSBI(θ, D, Dobs, n_runs=4):
         generated = False
         while not generated:
             if i == 0:
-                models = [LSBI(θ, D, μ= (θmin + θmax)/2, Σ= (θmax - θmin)**2)]
+                models = [LSBI(θ, D, μ= (θmin + θmax)/2, Σ= ((θmax - θmin)/2)**2)]
             else:
                 models.append(LSBI(θ_, D_, μ=models[-1].μ, Σ=models[-1].Σ))
             if i < n_runs-1:
@@ -156,7 +156,7 @@ plottingymax = 1/np.sqrt(np.pi*2)/finalstd
 
 for n in range(n_runs+1):
     if n == 0:
-        posterior = multivariate_normal(mean=(θmin + θmax)/2, cov=((θmax - θmin)/6)**2)
+        posterior = multivariate_normal(mean=(θmin + θmax)/2, cov=((θmax - θmin)/2)**2)
     else:
         posterior = models[n-1].posterior(Dobs)
     postcov = posterior.cov
