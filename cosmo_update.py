@@ -138,7 +138,8 @@ def run_LSBI(θ, D, Dobs, n_runs=4):
 
 import tqdm
 ## Create initial simulations
-θ = np.random.normal(loc=(θmin + θmax) / 2, scale=(θmax - θmin) / 6, size=(Nsim, 6))
+n_params = emulator.n_parameters
+θ = np.random.normal(loc=(θmin + θmax) / 2, scale=(θmax - θmin) / 6, size=(Nsim, n_params))
 Cl = emulator.predict(θ)
 D = CMB(Cl).rvs()
 models=(run_LSBI(θ,D,Dobs,n_runs))
