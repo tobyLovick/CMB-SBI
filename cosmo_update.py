@@ -7,8 +7,8 @@ import sys
 if len(sys.argv) < 5:
     Nsim = 10000
     n_runs = 4
-    filename = 'cosmo_update-10000-4.pdf'
     N_shape = 2
+    filename = 'cosmo_update-10000-4-2.pdf'
 else:
     Nsim = int(sys.argv[1])
     n_runs = int(sys.argv[2])
