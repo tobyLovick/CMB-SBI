@@ -63,6 +63,7 @@ class CMB(object):
         return (chi2(2*l+1).logpdf((2*l+1)*x/self.Cl)  + np.log(2*l+1)-np.log(self.Cl)).sum(axis=-1) 
 
 from cosmopower_jax.cosmopower_jax import CosmoPowerJAX 
+T02=2.72548
 emulator = CosmoPowerJAX(probe='cmb_tt')
 paramnames = [('Ωbh2', r'\Omega_b h^2'), ('Ωch2', r'\Omega_c h^2'), ('h', 'h'), ('τ', r'\tau'), ('ns', r'n_s'), ('lnA', r'\ln(10^{10}A_s)')]
 params = ['Ωbh2', 'Ωch2', 'h', 'τ', 'ns', 'lnA']
@@ -72,7 +73,7 @@ l = np.arange(2, 2509)
 #| Define the observed variables, set seed for observed, random seed for the analysis
 np.random.seed(0)
 θobs = np.array([0.02225,0.120,0.693,0.054,0.965,3.05])
-Dobs = CMB(emulator.predict(θobs)).rvs()
+Dobs = CMB(emulator.predict(θobs)*T02).rvs()
 np.savetxt("theta.csv", θobs)
 np.savetxt("data.csv", Dobs)
 np.random.seed()
@@ -94,7 +95,7 @@ jaxsamples = read_chains(os.path.join(os.path.dirname(__file__), 'jaxLCDM.csv'))
 #| Wrap cosmopowerjax predictions with this to check that only physical simulations are generated
 def Generate_Cl(Nsim,model,i):
     θ_ = model.rvs(Nsim)
-    predictions = emulator.predict(θ_)
+    predictions = emulator.predict(θ_)*T02
     θ_ = θ_[~np.isinf(predictions).any(axis=1)]
     predictions = predictions[~np.isinf(predictions).any(axis=1)]
     breakcondition = 0
@@ -140,7 +141,7 @@ import tqdm
 ## Create initial simulations
 n_params = emulator.n_parameters
 θ = np.random.normal(loc=(θmin + θmax) / 2, scale=(θmax - θmin) / 6, size=(Nsim, n_params))
-Cl = emulator.predict(θ)
+Cl = emulator.predict(θ)*T02
 D = CMB(Cl).rvs()
 models=(run_LSBI(θ,D,Dobs,n_runs))
 
