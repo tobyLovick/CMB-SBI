@@ -1,21 +1,25 @@
 #| Define LSBI inference function
-## Initialise command line parameters: Nsim, resolution, and filename
+
+##| This version uses the development version of lsbi to plot mixture models. This needs to be pip installed from the plot branch
+## Initialise command line parameters: Nsim, resolution,shape and filename
 import sys
 ## if no arguments are provided, use the default values
-if len(sys.argv) < 4:
+if len(sys.argv) < 5:
     Nsim = 10000
     n_runs = 4
-    filename = 'cosmo_update-10000-4.pdf'
+    N_shape = 2
+    filename = 'cosmo_update-10000-4-2.pdf'
 else:
     Nsim = int(sys.argv[1])
     n_runs = int(sys.argv[2])
-    filename = sys.argv[3]+"-"+sys.argv[1]+"-"+sys.argv[2]+".pdf"
-print(Nsim, n_runs, filename)
+    N_shape = int(sys.argv[3])
+    filename = sys.argv[4]+"-"+sys.argv[1]+"-"+sys.argv[2]+"-"+sys.argv[3]+".pdf"
+print(Nsim, n_runs, N_shape, filename)
 
 from matplotlib.backends.backend_pdf import PdfPages
 import numpy as np
-from scipy.stats import invwishart, matrix_normal, multivariate_normal, norm
-from lsbi.model import LinearModel
+from scipy.stats import invwishart, matrix_normal, norm
+from lsbi.model import MixtureModel
 # np.random.seed(0)
 
 def LSBI(θ, D, *args, **kwargs):
@@ -41,7 +45,7 @@ def LSBI(θ, D, *args, **kwargs):
     L2 = np.linalg.cholesky(invΘ)
     M_ = Ψ @ invΘ + np.einsum('...jk,...kl,ml->...jm', L1, np.random.randn(*shape, d, n), L2)
     m_ = Dbar - M_ @ θbar + np.einsum('...jk,...k->...j', L1, np.random.randn(*shape, d))
-    return LinearModel(m=m_, M=M_, C=C_, *args, **kwargs)
+    return MixtureModel(m=m_, M=M_, C=C_, *args, **kwargs)
 
 #| Define CMB sampling class
 
@@ -59,6 +63,7 @@ class CMB(object):
         return (chi2(2*l+1).logpdf((2*l+1)*x/self.Cl)  + np.log(2*l+1)-np.log(self.Cl)).sum(axis=-1) 
 
 from cosmopower_jax.cosmopower_jax import CosmoPowerJAX 
+T02=2.72548
 emulator = CosmoPowerJAX(probe='cmb_tt')
 paramnames = [('Ωbh2', r'\Omega_b h^2'), ('Ωch2', r'\Omega_c h^2'), ('h', 'h'), ('τ', r'\tau'), ('ns', r'n_s'), ('lnA', r'\ln(10^{10}A_s)')]
 params = ['Ωbh2', 'Ωch2', 'h', 'τ', 'ns', 'lnA']
@@ -77,7 +82,6 @@ np.random.seed(0)
 Dobs = CMB(emulator.predict(θobs)+Nl).rvs()
 np.savetxt("theta.csv", θobs)
 np.savetxt("data.csv", Dobs)
-np.random.seed()
 
 #| If you want to reproduce the ground-truth yourself, uncomment and run the below (takes about an hour on four cores)
 
@@ -94,7 +98,7 @@ jaxsamples = read_chains(os.path.join(os.path.dirname(__file__), 'jaxLCDM.csv'))
 #| Wrap cosmopowerjax predictions with this to check that only physical simulations are generated
 def Generate_Cl(Nsim,model,i):
     θ_ = model.rvs(Nsim)
-    predictions = emulator.predict(θ_)
+    predictions = emulator.predict(θ_)*T02
     θ_ = θ_[~np.isinf(predictions).any(axis=1)]
     predictions = predictions[~np.isinf(predictions).any(axis=1)]
     breakcondition = 0
@@ -120,9 +124,9 @@ def run_LSBI(θ, D, Dobs, n_runs=4):
         generated = False
         while not generated:
             if i == 0:
-                models = [LSBI(θ, D, μ= (θmin + θmax)/2, Σ= ((θmax - θmin)/2)*2)]
+                models = [LSBI(θ, D, μ= (θmin + θmax)/2, Σ= ((θmax - θmin)/2)**2, shape=N_shape)]
             else:
-                models.append(LSBI(θ_, D_, μ=models[-1].μ, Σ=models[-1].Σ))
+                models.append(LSBI(θ_, D_, μ=models[-1].μ, Σ=models[-1].Σ, shape=N_shape))
             if i < n_runs-1:
                 try:
                     currmodel = models[-1].posterior(Dobs)
@@ -138,8 +142,9 @@ def run_LSBI(θ, D, Dobs, n_runs=4):
 
 import tqdm
 ## Create initial simulations
-θ = np.random.normal(loc=(θmin + θmax) / 2, scale=(θmax - θmin) / 6, size=(Nsim, 6))
-Cl = emulator.predict(θ)
+n_params = emulator.n_parameters
+θ = np.random.normal(loc=(θmin + θmax) / 2, scale=(θmax - θmin) / 6, size=(Nsim, n_params))
+Cl = emulator.predict(θ)*T02
 D = CMB(Cl+Nl).rvs()
 models=(run_LSBI(θ,D,Dobs,n_runs))
 
@@ -148,53 +153,25 @@ models=(run_LSBI(θ,D,Dobs,n_runs))
 from anesthetic.plot import make_2d_axes
 fig,axes = make_2d_axes(params, labels=jaxsamples.get_labels_map(), figsize=(7,7))
 
-#| Set Plotting Limits, 6 sigma away from the centre
+#| Set Plotting Limits, 6 sigma away from the centre of one of the normals in the mixturenormal (CHANGE THIS)
 finalpost = models[-1].posterior(Dobs)
-finalstd = np.sqrt(np.diag(finalpost.cov))
-finalmean = finalpost.mean
+finalstd = np.sqrt(np.diag(finalpost.cov[0]))
 lowerlim = θobs- 6*finalstd
 upperlim = θobs + 6*finalstd
 for i, p in enumerate(params):
     axes.loc[p, p].set_xlim(lowerlim[i], upperlim[i])
-plottingymax = 1/np.sqrt(np.pi*2)/finalstd
 
+from lsbi.stats import multivariate_normal, mixture_normal
 for n in range(n_runs+1):
     if n == 0:
-        posterior = multivariate_normal(mean=(θmin + θmax)/2, cov=((θmax - θmin)/2)**2)
+        posterior = multivariate_normal(mean=(θmin + θmax)/2, cov=((θmax - θmin)/2)**2) ## Prior
+        posterior.plot_2d(axes,label='Prior', color='black', alpha=0.2)
     else:
         posterior = models[n-1].posterior(Dobs)
-    postcov = posterior.cov
-    poststd = np.sqrt(np.diag(postcov))
-    postmean = posterior.mean
-
-    label = f'run {n}' if n > 0 else 'Prior'
-    color = f'C{n-1}' if n > 0 else 'black'
-    
-    for i in range(6):
-        for j in range(i+1):
-            ax = axes.loc[params[i], params[j]]
-            if i==j:
-                x=np.linspace(lowerlim[i], upperlim [i], 200)
-                y = norm.pdf(x, loc=postmean[i], scale=poststd[i])
-                ## y scaled into the triangle plot: 
-                y = (0.9*y/plottingymax[i])*(upperlim[i]-lowerlim[i])+lowerlim[i]
-                ax.plot(x, y, color=color, label=label)
-            else:
-                ## Turning the covariance matrix into an ellipse
-                covij = [[postcov[i,i], postcov[i,j]], [postcov[j,i], postcov[j,j]]]
-                evals, evecs = np.linalg.eig(covij)
-                a,b = 3*np.sqrt(evals) ## semi-major and semi-minor radii
-                angle = np.arctan2(evecs[0,0], evecs[1,0])
-                evalavg = (evals.prod())**0.25
-                stdratio = min(1,np.sqrt(finalstd[i]*finalstd[j])/evalavg)
-                from matplotlib.patches import Ellipse
-                e1 = Ellipse((postmean[j], postmean[i]), a,b,angle=angle*180/np.pi, fill=True, color=color, alpha=0.8*stdratio,label=label)
-                ax.add_artist(e1)
-                e2 = Ellipse((postmean[j], postmean[i]), 2*a,2*b, angle=angle*180/np.pi, fill=True, color=color, alpha=0.4*stdratio)
-                ax.add_artist(e2)
-    posteriorsamples = posterior.rvs(500)
-    posteriorsamples = jaxsamples.__class__(posteriorsamples, columns=params)
-    posteriorsamples.plot_2d(axes,kinds=dict(upper='scatter_2d'),label=f'run {n+1}', alpha=0.6, color=color)
+        means = posterior.mean
+        covs = posterior.cov
+        postcopy = mixture_normal(mean=means, cov=covs)
+        postcopy.plot_2d(axes,label=f'run {n}', color=f'C{n-1}', alpha=0.2+(0.6/n_runs)*n)
 
 axes.iloc[-1, 0].legend(loc='lower center', bbox_to_anchor=(len(axes)/2, len(axes)), ncol=6)
 axes.axlines(dict(zip(params, θobs)), color='k', ls='--')
