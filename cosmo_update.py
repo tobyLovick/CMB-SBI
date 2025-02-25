@@ -63,19 +63,21 @@ class CMB(object):
         return (chi2(2*l+1).logpdf((2*l+1)*x/self.Cl)  + np.log(2*l+1)-np.log(self.Cl)).sum(axis=-1) 
 
 from cosmopower_jax.cosmopower_jax import CosmoPowerJAX 
-T02=2.72548
-emulator = CosmoPowerJAX(probe='cmb_tt')
-paramnames = [('Ωbh2', r'\Omega_b h^2'), ('Ωch2', r'\Omega_c h^2'), ('h', 'h'), ('τ', r'\tau'), ('ns', r'n_s'), ('lnA', r'\ln(10^{10}A_s)')]
-params = ['Ωbh2', 'Ωch2', 'h', 'τ', 'ns', 'lnA']
-θmin, θmax = np.array([[0.01865, 0.02625], [0.05, 0.255], [0.64, 0.82], [0.04, 0.12], [0.84, 1.1], [1.61, 3.91]]).T
+emulator = CosmoPowerJAX(probe='custom_log',filename='TT_w_v1.npz')
+T02=2.72548**2
+paramnames = [('Ωbh2', r'\Omega_b h^2'), ('Ωch2', r'\Omega_c h^2'), ('H0', r'H_0'), ('τ', r'\tau'), ('ns', r'n_s'), ('lnA', r'\ln(10^{10}A_s)'),('w', r'w')]
+params = ['Ωbh2', 'Ωch2', 'H0', 'τ', 'ns', 'lnA','w']
+θmin, θmax = np.array([[0.01865, 0.02625], [0.05, 0.255], [64, 82], [0.04, 0.12], [0.84, 1.1], [1.61, 3.91],[-1.5,-0.5]]).T
 l = np.arange(2, 2509)
 
 #| Define the observed variables, set seed for observed, random seed for the analysis
 np.random.seed(0)
-θobs = np.array([0.02225,0.120,0.693,0.054,0.965,3.05])
-Dobs = CMB(emulator.predict(θobs)*T02).rvs()
-np.savetxt("theta.csv", θobs)
-np.savetxt("data.csv", Dobs)
+θobs = np.array([0.02225,0.120,69.3,0.054,0.965,3.05,-0.7])
+reordering=[5,4,2,0,1,6,3]
+print(θobs[reordering])
+Dobs = CMB(emulator.predict(θobs[reordering])[:2507]*T02).rvs()
+np.savetxt("wtheta.csv", θobs)
+np.savetxt("wdata.csv", Dobs)
 np.random.seed()
 
 
@@ -94,8 +96,9 @@ jaxsamples = read_chains(os.path.join(os.path.dirname(__file__), 'jaxLCDM.csv'))
 
 #| Wrap cosmopowerjax predictions with this to check that only physical simulations are generated
 def Generate_Cl(Nsim,model,i):
-    θ_ = model.rvs(Nsim)
-    predictions = emulator.predict(θ_)*T02
+    θ_ = model.rvs(Nsim)[:,reordering]
+    print(θ_.shape)
+    predictions = emulator.predict(θ_)[:,:2507]*T02 
     θ_ = θ_[~np.isinf(predictions).any(axis=1)]
     predictions = predictions[~np.isinf(predictions).any(axis=1)]
     breakcondition = 0
@@ -103,8 +106,8 @@ def Generate_Cl(Nsim,model,i):
         print(f"Bad Posterior on iteration {i+1}")
         raise ValueError("Bad Posterior")
     while len(predictions) < Nsim and breakcondition < 10:
-        θ_ = np.concatenate([θ_,model.rvs(Nsim-len(predictions))])
-        predictions = emulator.predict(θ_)
+        θ_ = np.concatenate([θ_,model.rvs(Nsim-len(predictions))[:,reordering]])
+        predictions = emulator.predict(θ_)[:,:2507]*T02
         θ_ = θ_[~np.isinf(predictions).any(axis=1)]
         predictions = predictions[~np.isinf(predictions).any(axis=1)]
         breakcondition += 1
@@ -141,7 +144,9 @@ import tqdm
 ## Create initial simulations
 n_params = emulator.n_parameters
 θ = np.random.normal(loc=(θmin + θmax) / 2, scale=(θmax - θmin) / 6, size=(Nsim, n_params))
-Cl = emulator.predict(θ)*T02
+## reorder theta to match the cosmopowerjax ordering
+θ = θ[:,reordering]
+Cl = emulator.predict(θ)[:,:2507]*T02
 D = CMB(Cl).rvs()
 models=(run_LSBI(θ,D,Dobs,n_runs))
 
@@ -158,6 +163,12 @@ upperlim = θobs + 6*finalstd
 for i, p in enumerate(params):
     axes.loc[p, p].set_xlim(lowerlim[i], upperlim[i])
 
+from matplotlib import pyplot as plt
+if n_runs < 6:
+    colors = [f'C{i}' for i in range(n_runs)]
+else:
+    colors = [plt.cm.Reds(i) for i in np.linspace(0, 1, n_runs)]
+
 from lsbi.stats import multivariate_normal, mixture_normal
 for n in range(n_runs+1):
     if n == 0:
@@ -166,11 +177,27 @@ for n in range(n_runs+1):
     else:
         posterior = models[n-1].posterior(Dobs)
         means = posterior.mean
+        print(means)
         covs = posterior.cov
-        postcopy = mixture_normal(mean=means, cov=covs)
-        postcopy.plot_2d(axes,label=f'run {n}', color=f'C{n-1}', alpha=0.2+(0.6/n_runs)*n)
+        logw = posterior.logw
+        postcopy = mixture_normal(mean=means, cov=covs, logw=logw)
+        postcopy.plot_2d(axes,label=f'run {n}', color=colors[n-1], alpha=0.2+(0.6/n_runs)*n,linewidth=1)
+
+## Evaluating the final posterior's accuracy for overfitting, by finding the mean and covariance of the mixture posterior
+finalpost = models[-1].posterior(Dobs)
+means = finalpost.mean
+covs = finalpost.cov
+logw = finalpost.logw
+meanmean = np.sum(means*np.exp(logw[:,None]),axis=0)
+EX2=meanmean[:,None]*meanmean[None,:] + np.sum(covs*np.exp(logw[:,None,None]),axis=0)
+meancov = EX2 - meanmean[:,None]*meanmean[None,:]
+## Find the chi2 value, valid for near gaussian posteriors
+chi2_cdf=chi2.cdf(np.dot((θobs-meanmean),np.linalg.solve(meancov,(θobs-meanmean))),6)
+p_value = np.min([chi2_cdf,1-chi2_cdf])
+print(f"Final Posterior P-value: {p_value}")
 
 axes.iloc[-1, 0].legend(loc='lower center', bbox_to_anchor=(len(axes)/2, len(axes)), ncol=6)
 axes.axlines(dict(zip(params, θobs)), color='k', ls='--')
 
 fig.savefig(filename, format="pdf", bbox_inches='tight')
+fig.savefig(filename.replace("pdf","png"), format="png", bbox_inches='tight')
