@@ -18,9 +18,8 @@ print(Nsim, n_runs, N_shape, filename)
 
 from matplotlib.backends.backend_pdf import PdfPages
 import numpy as np
-from scipy.stats import invwishart, matrix_normal, norm
+from scipy.stats import invwishart
 from lsbi.model import MixtureModel
-# np.random.seed(0)
 
 def LSBI(θ, D, *args, **kwargs):
     shape = kwargs.pop('shape', ())
@@ -126,12 +125,18 @@ def run_LSBI(θ, D, Dobs, n_runs=4):
             if i == 0:
                 models = [LSBI(θ, D, μ= (θmin + θmax)/2, Σ= ((θmax - θmin)/2)**2, shape=N_shape)]
             else:
-                models.append(LSBI(θ_, D_, μ=models[-1].μ, Σ=models[-1].Σ, shape=N_shape))
+                models.append(LSBI(θ, D, μ=models[-1].μ, Σ=models[-1].Σ, shape=N_shape))
             if i < n_runs-1:
                 try:
                     currmodel = models[-1].posterior(Dobs)
-                    θ_, Cl_ = Generate_Cl(Nsim,currmodel,i)
-                    D_ = CMB(Cl_).rvs()
+                    θnew, Cl_ = Generate_Cl(Nsim,currmodel,i)
+                    Dnew = CMB(Cl_).rvs()
+                    if i <= 2:
+                        θ=θnew
+                        D=Dnew
+                    else:
+                        θ = np.concatenate([θ[:-int(np.floor(Nsim/2)),:],θnew])
+                        D = np.concatenate([D[:-int(np.floor(Nsim/2)),:],Dnew])
                     generated = True
                 except Exception as e:
                     models.pop()
@@ -154,6 +159,11 @@ models=(run_LSBI(θ,D,Dobs,n_runs))
 
 from anesthetic.plot import make_2d_axes
 fig,axes = make_2d_axes(params, labels=jaxsamples.get_labels_map(), figsize=(7,7))
+import matplotlib.pyplot as plt
+if n_runs < 6:
+    colors = [f'C{i}' for i in range(n_runs)]
+else:
+    colors = [plt.cm.Reds(i) for i in np.linspace(0, 1, n_runs)]
 
 #| Set Plotting Limits, 6 sigma away from the centre of one of the normals in the mixturenormal (CHANGE THIS)
 finalpost = models[-1].posterior(Dobs)
@@ -179,8 +189,13 @@ for n in range(n_runs+1):
         means = posterior.mean
         print(means)
         covs = posterior.cov
-        logw = posterior.logw
-        postcopy = mixture_normal(mean=means, cov=covs, logw=logw)
+        if N_shape==1:
+            means = means[:,None]
+            covs = covs[:,None,None]
+            postcopy=multivariate_normal(mean=means, cov=covs)
+        else:
+            logw = posterior.logw
+            postcopy = mixture_normal(mean=means, cov=covs, logw=logw)
         postcopy.plot_2d(axes,label=f'run {n}', color=colors[n-1], alpha=0.2+(0.6/n_runs)*n,linewidth=1)
 
 ## Evaluating the final posterior's accuracy for overfitting, by finding the mean and covariance of the mixture posterior
@@ -198,6 +213,5 @@ print(f"Final Posterior P-value: {p_value}")
 
 axes.iloc[-1, 0].legend(loc='lower center', bbox_to_anchor=(len(axes)/2, len(axes)), ncol=6)
 axes.axlines(dict(zip(params, θobs)), color='k', ls='--')
-
 fig.savefig(filename, format="pdf", bbox_inches='tight')
-fig.savefig(filename.replace("pdf","png"), format="png", bbox_inches='tight')
+# fig.savefig(filename.replace("pdf","png"), format="png", bbox_inches='tight')
